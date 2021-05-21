@@ -1,0 +1,810 @@
+#include "GLWidget.h"
+
+#if !defined(__APPLE__)
+#include <GL/glu.h>
+#endif
+
+#include <iostream>
+#include "../Core/Matrices.h"
+#include "../Test/TestFunctions.h"
+#include "../Core/Materials.h"
+#include "../Core/Constants.h"
+
+using namespace std;
+
+#include <Core/Exceptions.h>
+
+namespace cagd
+{
+    //--------------------------------
+    // special and default constructor
+    //--------------------------------
+    GLWidget::GLWidget(QWidget *parent): QOpenGLWidget(parent)
+    {
+        _current_tab = 0;
+        _derivatives_scale = 1.0;
+        _selected_parametric_curve = 0;
+        _selected_model = 0;
+        _selected_material = 0;
+        _parametric_div_point_count = 200;
+
+        _parametric_first_derivatives = true;
+        _parametric_second_derivatives = true;
+
+        _materials[0] = MatFBBrass;
+        _materials[1] = MatFBGold;
+        _materials[2] = MatFBSilver;
+        _materials[3] = MatFBEmerald;
+        _materials[4] = MatFBPearl;
+        _materials[5] = MatFBRuby;
+        _materials[6] = MatFBTurquoise;
+
+        _models = RowMatrix<TriangulatedMesh3>(6);
+
+        _timer = new QTimer(this);
+        _timer->setInterval(0);
+
+        connect(_timer, SIGNAL(timeout()), this, SLOT(_animate()));
+
+    }
+
+    GLWidget:: ~GLWidget() {
+        /*  Freeing up the Parametric Curves  */
+        for (int i = 0; i < _parametric_curves_count; i++) {
+            if (_parametric_curves[i]) {
+                delete _parametric_curves[i];
+                _parametric_curves[i] = nullptr;
+            }
+
+            if (_images_of_parametric_curves[i]) {
+                delete _images_of_parametric_curves[i];
+                _images_of_parametric_curves[i] = nullptr;
+            }
+        }
+
+        if (_dl) {
+            delete _dl; _dl = nullptr;
+        }
+    }
+
+    void GLWidget::initializeNthParametricCurve(int n) {
+        if (n >= _parametric_curves_count) {
+            return;
+        }
+        GLenum use_flag = GL_STATIC_DRAW;
+        if (!_parametric_curves[n]) {
+             throw Exception("Could_not_generate_the_parametric_curve");
+        }
+
+        _images_of_parametric_curves[n] = _parametric_curves[n]->GenerateImage(_parametric_div_point_count, use_flag);
+
+        if (!_images_of_parametric_curves[n]) {
+            throw Exception("Could_not_generate_the_image_of_the_parametric_curve");
+        }
+
+        if (!_images_of_parametric_curves[n]->UpdateVertexBufferObjects(_derivatives_scale, use_flag)) {
+            throw Exception("Could_not_create_the_vbos_of_the_parametric_curve");
+        }
+    }
+
+    void GLWidget::initializeParametricCurves() {
+        /*  Spiral on Cone  */
+        RowMatrix<ParametricCurve3::Derivative> spiral_on_cone_derivatives(3);
+        spiral_on_cone_derivatives[0] = spiral_on_cone::d0;
+        spiral_on_cone_derivatives[1] = spiral_on_cone::d1;
+        spiral_on_cone_derivatives[2] = spiral_on_cone::d2;
+
+        _parametric_curves[0] = nullptr;
+        _images_of_parametric_curves[0] = nullptr;
+
+        _parametric_curves[0] = new (nothrow) ParametricCurve3(spiral_on_cone_derivatives, spiral_on_cone::u_min, spiral_on_cone::u_max);
+
+         initializeNthParametricCurve(0);
+
+        /*  Torus Knot  */
+        RowMatrix<ParametricCurve3::Derivative> torus_knot_derivatives(3);
+        torus_knot_derivatives[0] = torus_knot::d0;
+        torus_knot_derivatives[1] = torus_knot::d1;
+        torus_knot_derivatives[2] = torus_knot::d2;
+
+        _parametric_curves[1] = nullptr;
+        _images_of_parametric_curves[1] = nullptr;
+
+        _parametric_curves[1] = new (nothrow) ParametricCurve3(torus_knot_derivatives, torus_knot::u_min, torus_knot::u_max);
+
+        initializeNthParametricCurve(1);
+
+        /* Circle */
+        RowMatrix<ParametricCurve3::Derivative> circle_derivatives(3);
+        circle_derivatives[0] = circle::d0;
+        circle_derivatives[1] = circle::d1;
+        circle_derivatives[2] = circle::d2;
+
+        _parametric_curves[2] = nullptr;
+        _images_of_parametric_curves[2] = nullptr;
+
+        _parametric_curves[2] = new (nothrow) ParametricCurve3(circle_derivatives, circle::u_min, circle::u_max);
+
+        initializeNthParametricCurve(2);
+
+        /*  Lissajous  */
+        RowMatrix<ParametricCurve3::Derivative> lissajous_derivatives(3);
+        lissajous_derivatives[0] = lissajous::d0;
+        lissajous_derivatives[1] = lissajous::d1;
+        lissajous_derivatives[2] = lissajous::d2;
+
+        _parametric_curves[3] = nullptr;
+        _images_of_parametric_curves[3] = nullptr;
+
+        _parametric_curves[3] = new (nothrow) ParametricCurve3(lissajous_derivatives, lissajous::u_min, lissajous::u_max);
+
+        initializeNthParametricCurve(3);
+
+        /*  Hypotrochoid  */
+        RowMatrix<ParametricCurve3::Derivative> hypotrochoid_derivatives(3);
+        hypotrochoid_derivatives[0] = hypotrochoid::d0;
+        hypotrochoid_derivatives[1] = hypotrochoid::d1;
+        hypotrochoid_derivatives[2] = hypotrochoid::d2;
+
+        _parametric_curves[4] = nullptr;
+        _images_of_parametric_curves[4] = nullptr;
+
+        _parametric_curves[4] = new (nothrow) ParametricCurve3(hypotrochoid_derivatives, hypotrochoid::u_min, hypotrochoid::u_max);
+
+        initializeNthParametricCurve(4);
+
+        /*  Rose  */
+        RowMatrix<ParametricCurve3::Derivative> rose_derivatives(3);
+        rose_derivatives[0] = rose::d0;
+        rose_derivatives[1] = rose::d1;
+        rose_derivatives[2] = rose::d2;
+
+        _parametric_curves[5] = nullptr;
+        _images_of_parametric_curves[5] = nullptr;
+
+        _parametric_curves[5] = new (nothrow) ParametricCurve3(rose_derivatives, rose::u_min, rose::u_max);
+
+        initializeNthParametricCurve(5);
+
+        /*  Sphere Curve  */
+        RowMatrix<ParametricCurve3::Derivative> sphere_curve_derivatives(3);
+        sphere_curve_derivatives[0] = sphere_curve::d0;
+        sphere_curve_derivatives[1] = sphere_curve::d1;
+        sphere_curve_derivatives[2] = sphere_curve::d2;
+
+        _parametric_curves[6] = nullptr;
+        _images_of_parametric_curves[6] = nullptr;
+
+        _parametric_curves[6] = new (nothrow) ParametricCurve3(sphere_curve_derivatives, sphere_curve::u_min, sphere_curve::u_max);
+
+        initializeNthParametricCurve(6);
+
+        /*  Torus Curve  */
+        RowMatrix<ParametricCurve3::Derivative> torus_curve_derivatives(3);
+        torus_curve_derivatives[0] = torus_curve::d0;
+        torus_curve_derivatives[1] = torus_curve::d1;
+        torus_curve_derivatives[2] = torus_curve::d2;
+
+        _parametric_curves[7] = nullptr;
+        _images_of_parametric_curves[7] = nullptr;
+
+        _parametric_curves[7] = new (nothrow) ParametricCurve3(torus_curve_derivatives, torus_curve::u_min, torus_curve::u_max);
+
+        initializeNthParametricCurve(7);
+
+    }
+
+    void GLWidget::initializeModels() {
+        if(_models[0].LoadFromOFF("Models/mouse.off", GL_TRUE))
+        {
+            if(!_models[0].UpdateVertexBufferObjects(GL_DYNAMIC_DRAW))
+            {
+                // @TODO Catch these errors
+            }
+        }
+        if(_models[1].LoadFromOFF("Models/bird.off", GL_TRUE))
+        {
+            if(_models[1].UpdateVertexBufferObjects(GL_DYNAMIC_DRAW))
+            {
+                // @TODO Catch these errors
+            }
+        }
+
+        if(_models[2].LoadFromOFF("Models/cube.off", GL_TRUE))
+        {
+            if(_models[2].UpdateVertexBufferObjects(GL_DYNAMIC_DRAW))
+            {
+                // @TODO Catch these errors
+            }
+        }
+
+        if(_models[3].LoadFromOFF("Models/cone.off", GL_TRUE))
+        {
+            if(_models[3].UpdateVertexBufferObjects(GL_DYNAMIC_DRAW))
+            {
+                // @TODO Catch these errors
+            }
+        }
+
+        if(_models[4].LoadFromOFF("Models/dragon.off", GL_TRUE))
+        {
+            if(_models[4].UpdateVertexBufferObjects(GL_DYNAMIC_DRAW))
+            {
+                // @TODO Catch these errors
+            }
+        }
+        if(_models[5].LoadFromOFF("Models/gangster.off", GL_TRUE))
+        {
+            if(_models[5].UpdateVertexBufferObjects(GL_DYNAMIC_DRAW))
+            {
+                // @TODO Catch these errors
+            }
+        }
+
+        _angle = 0.0;
+        _timer->start();
+    }
+
+    void GLWidget::initializeCastle() {
+        _castle_dimension = 15;
+        _castle_size = 0;
+        initializePlane();
+        initializeWalls();
+        initializeTowers();
+        initializeGarden();
+    }
+
+    void GLWidget::initializePlane() {
+        _castle[_castle_size].id = 2;
+        _castle[_castle_size].position = DCoordinate3(0.0, -2.0, -_castle_dimension/2);
+        _castle[_castle_size].angle[0] = 0.0; _castle[_castle_size].angle[1] = 0.0; _castle[_castle_size].angle[2] = 0.0;
+        _castle[_castle_size].scale[0] = _castle_dimension; _castle[_castle_size].scale[1] = 1.0; _castle[_castle_size].scale[2] = _castle_dimension;
+        _castle_size++;
+
+    }
+    void GLWidget::initializeWalls() {
+        for (int i = 0; i < _castle_dimension / 4; i++) {
+            for(int j = 0; j < _castle_dimension-4; j++) {
+                _castle[_castle_size].id = 2;
+                _castle[_castle_size].position = DCoordinate3(_castle_dimension/2 - (GLdouble)j -2, -1.0 + i, -2.0);
+                _castle[_castle_size].angle[0] = 0.0; _castle[_castle_size].angle[1] = 0.0; _castle[_castle_size].angle[2] = 0.0;
+                _castle[_castle_size].scale[0] = 1.0; _castle[_castle_size].scale[1] = 1.0; _castle[_castle_size].scale[2] = 1.0;
+                _castle_size++;
+
+                _castle[_castle_size].id = 2;
+                _castle[_castle_size].position = DCoordinate3(_castle_dimension/2 - (GLdouble)j -2, -1.0 + i, -_castle_dimension+1.0);
+                _castle[_castle_size].angle[0] = 0.0; _castle[_castle_size].angle[1] = 0.0; _castle[_castle_size].angle[2] = 0.0;
+                _castle[_castle_size].scale[0] = 1.0; _castle[_castle_size].scale[1] = 1.0; _castle[_castle_size].scale[2] = 1.0;
+                _castle_size++;
+            }
+        }
+
+        for (int i = 0; i < _castle_dimension / 3; i++) {
+            for(int j = 0; j < _castle_dimension-4; j++) {
+                _castle[_castle_size].id = 2;
+                _castle[_castle_size].position = DCoordinate3(_castle_dimension/2 - 2, -1.0 + i, -3.0 - j);
+                _castle[_castle_size].angle[0] = 0.0; _castle[_castle_size].angle[1] = 0.0; _castle[_castle_size].angle[2] = 0.0;
+                _castle[_castle_size].scale[0] = 1.0; _castle[_castle_size].scale[1] = 1.0; _castle[_castle_size].scale[2] = 1.0;
+                _castle_size++;
+
+                _castle[_castle_size].id = 2;
+                _castle[_castle_size].position = DCoordinate3(-_castle_dimension/2 + 2, -1.0 + i, -3.0 - j);
+                _castle[_castle_size].angle[0] = 0.0; _castle[_castle_size].angle[1] = 0.0; _castle[_castle_size].angle[2] = 0.0;
+                _castle[_castle_size].scale[0] = 1.0; _castle[_castle_size].scale[1] = 1.0; _castle[_castle_size].scale[2] = 1.0;
+                _castle_size++;
+            }
+        }
+    }
+    void GLWidget::initializeTowers() {
+        // Left Tower
+        for (int i = 0; i < 7; i++) {
+            for(int j = 1; j <= 2; j++) {
+                // Front face
+                _castle[_castle_size].id = 2;
+                _castle[_castle_size].position = DCoordinate3(-_castle_dimension/2 + j, -1.0 + i, -1.0);
+                _castle[_castle_size].angle[0] = 0.0; _castle[_castle_size].angle[1] = 0.0; _castle[_castle_size].angle[2] = 0.0;
+                _castle[_castle_size].scale[0] = 1.0; _castle[_castle_size].scale[1] = 1.0; _castle[_castle_size].scale[2] = 1.0;
+                _castle_size++;
+
+                // Back face
+                _castle[_castle_size].id = 2;
+                _castle[_castle_size].position = DCoordinate3(-_castle_dimension/2 + j, -1.0 + i, -4.0);
+                _castle[_castle_size].angle[0] = 0.0; _castle[_castle_size].angle[1] = 0.0; _castle[_castle_size].angle[2] = 0.0;
+                _castle[_castle_size].scale[0] = 1.0; _castle[_castle_size].scale[1] = 1.0; _castle[_castle_size].scale[2] = 1.0;
+                _castle_size++;
+
+                // Left face
+                _castle[_castle_size].id = 2;
+                _castle[_castle_size].position = DCoordinate3(-_castle_dimension/2, -1.0 + i, -1.0 - j);
+                _castle[_castle_size].angle[0] = 0.0; _castle[_castle_size].angle[1] = 0.0; _castle[_castle_size].angle[2] = 0.0;
+                _castle[_castle_size].scale[0] = 1.0; _castle[_castle_size].scale[1] = 1.0; _castle[_castle_size].scale[2] = 1.0;
+                _castle_size++;
+
+                // Right face
+                _castle[_castle_size].id = 2;
+                _castle[_castle_size].position = DCoordinate3(-_castle_dimension/2 + 3, -1.0 + i, -1.0 - j);
+                _castle[_castle_size].angle[0] = 0.0; _castle[_castle_size].angle[1] = 0.0; _castle[_castle_size].angle[2] = 0.0;
+                _castle[_castle_size].scale[0] = 1.0; _castle[_castle_size].scale[1] = 1.0; _castle[_castle_size].scale[2] = 1.0;
+                _castle_size++;
+            }
+        }
+        // Left Cone
+        _castle[_castle_size].id = 3;
+        _castle[_castle_size].position = DCoordinate3(-_castle_dimension/2 + 1.5, 2.5, 7.5);
+        _castle[_castle_size].angle[0] = 270.0; _castle[_castle_size].angle[1] = 0.0; _castle[_castle_size].angle[2] = 0.0;
+        _castle[_castle_size].scale[0] = 4.0; _castle[_castle_size].scale[1] = 4.0; _castle[_castle_size].scale[2] = 4.0;
+        _castle_size++;
+
+        // Right Cone
+        _castle[_castle_size].id = 3;
+        _castle[_castle_size].position = DCoordinate3(_castle_dimension/2 - 1.5, 2.5, 7.5);
+        _castle[_castle_size].angle[0] = 270.0; _castle[_castle_size].angle[1] = 0.0; _castle[_castle_size].angle[2] = 0.0;
+        _castle[_castle_size].scale[0] = 4.0; _castle[_castle_size].scale[1] = 4.0; _castle[_castle_size].scale[2] = 4.0;
+        _castle_size++;
+
+        // Right Tower
+        for (int i = 0; i < 7; i++) {
+            for(int j = 1; j <= 2; j++) {
+                // Front face
+                _castle[_castle_size].id = 2;
+                _castle[_castle_size].position = DCoordinate3(_castle_dimension/2 - j, -1.0 + i, -1.0);
+                _castle[_castle_size].angle[0] = 0.0; _castle[_castle_size].angle[1] = 0.0; _castle[_castle_size].angle[2] = 0.0;
+                _castle[_castle_size].scale[0] = 1.0; _castle[_castle_size].scale[1] = 1.0; _castle[_castle_size].scale[2] = 1.0;
+                _castle_size++;
+
+                // Back face
+                _castle[_castle_size].id = 2;
+                _castle[_castle_size].position = DCoordinate3(_castle_dimension/2 - j, -1.0 + i, -4.0);
+                _castle[_castle_size].angle[0] = 0.0; _castle[_castle_size].angle[1] = 0.0; _castle[_castle_size].angle[2] = 0.0;
+                _castle[_castle_size].scale[0] = 1.0; _castle[_castle_size].scale[1] = 1.0; _castle[_castle_size].scale[2] = 1.0;
+                _castle_size++;
+
+                // Left face
+                _castle[_castle_size].id = 2;
+                _castle[_castle_size].position = DCoordinate3(_castle_dimension/2, -1.0 + i, -1.0 - j);
+                _castle[_castle_size].angle[0] = 0.0; _castle[_castle_size].angle[1] = 0.0; _castle[_castle_size].angle[2] = 0.0;
+                _castle[_castle_size].scale[0] = 1.0; _castle[_castle_size].scale[1] = 1.0; _castle[_castle_size].scale[2] = 1.0;
+                _castle_size++;
+
+                // Right face
+                _castle[_castle_size].id = 2;
+                _castle[_castle_size].position = DCoordinate3(_castle_dimension/2 - 3, -1.0 + i, -1.0 - j);
+                _castle[_castle_size].angle[0] = 0.0; _castle[_castle_size].angle[1] = 0.0; _castle[_castle_size].angle[2] = 0.0;
+                _castle[_castle_size].scale[0] = 1.0; _castle[_castle_size].scale[1] = 1.0; _castle[_castle_size].scale[2] = 1.0;
+                _castle_size++;
+            }
+
+        }
+    }
+    void GLWidget::initializeGarden() {
+        // Dragon
+        _castle[_castle_size].id = 4;
+        _castle[_castle_size].position = DCoordinate3(0.0, 4.0, 4.0);
+        _castle[_castle_size].angle[0] = 270.0; _castle[_castle_size].angle[1] = 0.0; _castle[_castle_size].angle[2] = 0.0;
+        _castle[_castle_size].scale[0] = 6.0; _castle[_castle_size].scale[1] = 6.0; _castle[_castle_size].scale[2] = 6.0;
+        _castle_size++;
+
+        // Shrek
+        _castle[_castle_size].id = 4;
+        _castle[_castle_size].position = DCoordinate3(0.0, -2.0, 4.0);
+        _castle[_castle_size].angle[0] = 0.0; _castle[_castle_size].angle[1] = 0.0; _castle[_castle_size].angle[2] = 0.0;
+        _castle[_castle_size].scale[0] = 3.0; _castle[_castle_size].scale[1] = 3.0; _castle[_castle_size].scale[2] = 3.0;
+        _castle_size++;
+    }
+
+    //--------------------------------------------------------------------------------------
+    // this virtual function is called once before the first call to paintGL() or resizeGL()
+    //--------------------------------------------------------------------------------------
+    void GLWidget::initializeGL()
+    {
+        // creating a perspective projection matrix
+        glMatrixMode(GL_PROJECTION);
+
+        glLoadIdentity();
+
+        _aspect = static_cast<double>(width()) / static_cast<double>(height());
+        _z_near = 1.0;
+        _z_far  = 1000.0;
+        _fovy   = 45.0;
+
+        gluPerspective(_fovy, _aspect, _z_near, _z_far);
+
+        // setting the model view matrix
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
+
+        _eye[0] = _eye[1] = 0.0; _eye[2] = 6.0;
+        _center[0] = _center[1] = _center[2] = 0.0;
+        _up[0] = _up[2] = 0.0; _up[1] = 1.0;
+
+        gluLookAt(_eye[0], _eye[1], _eye[2], _center[0], _center[1], _center[2], _up[0], _up[1], _up[2]);
+
+        // enabling the depth test
+        glEnable(GL_DEPTH_TEST);
+
+        // setting the background color
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+
+        // initial values of transformation parameters
+        _angle_x = _angle_y = _angle_z = 0.0;
+        _trans_x = _trans_y = _trans_z = 0.0;
+        _zoom = 1.0;
+
+        // ...
+
+        try
+        {
+            // initializing the OpenGL Extension Wrangler library
+            GLenum error = glewInit();
+
+            if (error != GLEW_OK)
+            {
+                throw Exception("Could not initialize the OpenGL Extension Wrangler Library!");
+            }
+
+            if (!glewIsSupported("GL_VERSION_2_0"))
+            {
+                throw Exception("Your graphics card is not compatible with OpenGL 2.0+! "
+                                "Try to update your driver or buy a new graphics adapter!");
+            }
+
+            // create and store your geometry in display lists or vertex buffer objects
+            // ...
+
+            initializeParametricCurves();
+            initializeModels();
+            initializeCastle();
+
+
+            HCoordinate3    direction(0.0, 0.0, 1.0, 0.0);
+            Color4          ambient(0.4, 0.4, 0.4, 1.0);
+            Color4          diffuse(0.8, 0.8, 0.8, 1.0);
+            Color4          specular(1.0, 1.0, 1.0, 1.0);
+
+            _dl = new (nothrow) DirectionalLight(GL_LIGHT0, direction, ambient, diffuse, specular);
+            if (!_dl) {
+                throw("Exception: Could Not Create The Directional Light!");
+            }
+
+            glEnable(GL_POINT_SMOOTH);
+            glHint(GL_POINT_SMOOTH_HINT, GL_NICEST);
+
+            glEnable(GL_LINE_SMOOTH);
+            glHint(GL_LINE_SMOOTH_HINT, GL_NICEST);
+
+            glEnable(GL_POLYGON_SMOOTH);
+            glHint(GL_POLYGON_SMOOTH_HINT, GL_NICEST);
+
+            glHint(GL_PERSPECTIVE_CORRECTION_HINT, GL_NICEST);
+
+            glEnable(GL_DEPTH_TEST);
+        }
+        catch (Exception &e)
+        {
+            cout << e << endl;
+        }
+    }
+
+    void GLWidget::paintDefaultTriangle() {
+        glColor3f(1.0f, 1.0f, 1.0f);
+        glBegin(GL_LINES);
+            glVertex3f(0.0f, 0.0f, 0.0f);
+            glVertex3f(1.1f, 0.0f, 0.0f);
+
+            glVertex3f(0.0f, 0.0f, 0.0f);
+            glVertex3f(0.0f, 1.1f, 0.0f);
+
+            glVertex3f(0.0f, 0.0f, 0.0f);
+            glVertex3f(0.0f, 0.0f, 1.1f);
+        glEnd();
+
+        glBegin(GL_TRIANGLES);
+            // attributes
+            glColor3f(1.0f, 0.0f, 0.0f);
+            // associated with position
+            glVertex3f(1.0f, 0.0f, 0.0f);
+
+            // attributes
+            glColor3f(0.0, 1.0, 0.0);
+            // associated with position
+            glVertex3f(0.0, 1.0, 0.0);
+
+            // attributes
+            glColor3f(0.0f, 0.0f, 1.0f);
+            // associated with position
+            glVertex3f(0.0f, 0.0f, 1.0f);
+        glEnd();
+    }
+
+    void GLWidget::paintSelectedParametricCurve() {
+        glColor3f(1.0f, 0.0f, 0.0f);
+        _images_of_parametric_curves[_selected_parametric_curve]->RenderDerivatives(0, GL_LINE_STRIP);
+
+        glPointSize(5.0f);
+            if (_parametric_first_derivatives) {
+                glColor3f(0.0f, 0.5f, 0.0f);
+                _images_of_parametric_curves[_selected_parametric_curve]->RenderDerivatives(1, GL_LINES);
+                _images_of_parametric_curves[_selected_parametric_curve]->RenderDerivatives(1, GL_POINTS);
+            }
+
+            if (_parametric_second_derivatives) {
+                glColor3f(1.0f, 0.5f, 0.9f);
+                _images_of_parametric_curves[_selected_parametric_curve]->RenderDerivatives(2, GL_LINES);
+                _images_of_parametric_curves[_selected_parametric_curve]->RenderDerivatives(2, GL_POINTS);
+            }
+        glPointSize(1.0f);
+    }
+
+    void GLWidget::paintCastle() {
+        for (int i = 0; i < _castle_size; i++) {
+            const ModelProperties &mp = _castle[i];
+            glPushMatrix();
+                glRotated(mp.angle[0], 1.0, 0.0, 0.0);
+                glRotated(mp.angle[1], 0.0, 1.0, 0.0);
+                glRotated(mp.angle[2], 0.0, 0.0, 1.0);
+
+                glTranslated(mp.position[0], mp.position[1], mp.position[2]);
+                glScaled(mp.scale[0], mp.scale[1], mp.scale[2]);
+
+                _models[mp.id].Render();
+            glPopMatrix();
+        }
+    }
+
+    void GLWidget::paintSelectedSurface() {
+        if (_dl)
+        {
+            _dl->Enable();
+                glEnable(GL_LIGHTING);
+                glEnable(GL_NORMALIZE);
+                    _materials[_selected_material].Apply();
+
+                    switch(_selected_model) {
+                        case 0:
+                            _models[0].Render();
+                        break;
+                        case 1:
+                            _models[1].Render();
+                        break;
+                        case 2:
+                            paintCastle();
+                        break;
+                    }
+
+                glDisable(GL_LIGHTING);
+                glDisable(GL_NORMALIZE);
+            _dl->Disable();
+        }
+
+    }
+
+    //-----------------------
+    // the rendering function
+    //-----------------------
+    void GLWidget::paintGL()
+    {
+        // clears the color and depth buffers
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        // stores/duplicates the original model view matrix
+        glPushMatrix();
+
+            // applying transformations
+            glRotatef(_angle_x, 1.0, 0.0, 0.0);
+            glRotatef(_angle_y, 0.0, 1.0, 0.0);
+            glRotatef(_angle_z, 0.0, 0.0, 1.0);
+            glTranslated(_trans_x, _trans_y, _trans_z);
+            glScaled(_zoom, _zoom, _zoom);
+
+            // render your geometry (this is oldest OpenGL rendering technique, later we will use some advanced methods)
+            switch(_current_tab) {
+                case 0:
+                    paintDefaultTriangle();
+                break;
+                case 1:
+                    paintSelectedParametricCurve();
+                break;
+                case 2:
+                    paintSelectedSurface();
+                break;
+            }
+
+        // pops the current matrix stack, replacing the current matrix with the one below it on the stack,
+        // i.e., the original model view matrix is restored
+        glPopMatrix();
+    }
+
+    //----------------------------------------------------------------------------
+    // when the main window is resized one needs to redefine the projection matrix
+    //----------------------------------------------------------------------------
+    void GLWidget::resizeGL(int w, int h)
+    {
+        // setting the new size of the rendering context
+        glViewport(0, 0, w, h);
+
+        // redefining the projection matrix
+        glMatrixMode(GL_PROJECTION);
+
+        glLoadIdentity();
+
+        _aspect = static_cast<double>(w) / static_cast<double>(h);
+
+        gluPerspective(_fovy, _aspect, _z_near, _z_far);
+
+        // switching back to the model view matrix
+        glMatrixMode(GL_MODELVIEW);
+
+        update();
+    }
+
+    //-----------------------------------
+    // implementation of the public slots
+    //-----------------------------------
+
+    void GLWidget::set_angle_x(int value)
+    {
+        if (_angle_x != value)
+        {
+            _angle_x = value;
+            update();
+        }
+    }
+
+    void GLWidget::set_angle_y(int value)
+    {
+        if (_angle_y != value)
+        {
+            _angle_y = value;
+            update();
+        }
+    }
+
+    void GLWidget::set_angle_z(int value)
+    {
+        if (_angle_z != value)
+        {
+            _angle_z = value;
+            update();
+        }
+    }
+
+    void GLWidget::set_zoom_factor(double value)
+    {
+        if (_zoom != value)
+        {
+            _zoom = value;
+            update();
+        }
+    }
+
+    void GLWidget::set_trans_x(double value)
+    {
+        if (_trans_x != value)
+        {
+            _trans_x = value;
+            update();
+        }
+    }
+
+    void GLWidget::set_trans_y(double value)
+    {
+        if (_trans_y != value)
+        {
+            _trans_y = value;
+            update();
+        }
+    }
+
+    void GLWidget::set_trans_z(double value)
+    {
+        if (_trans_z != value)
+        {
+            _trans_z = value;
+            update();
+        }
+    }
+
+    void GLWidget::set_parametric_curve(int value) {
+        if(_selected_parametric_curve != value) {
+            _selected_parametric_curve = value;
+            update();
+            set_subdivision_points(_parametric_div_point_count);
+            set_derivatives_scale(_derivatives_scale * 100);
+        }
+    }
+
+    void GLWidget::set_derivatives_scale(int value) {
+        double res = (double) value / 100.0;
+        if (_derivatives_scale != res) {
+            _derivatives_scale = res;
+            _images_of_parametric_curves[_selected_parametric_curve]->UpdateVertexBufferObjects(_derivatives_scale);
+            update();
+        }
+    }
+
+    void GLWidget::set_selected_model(int value) {
+       if(_selected_model != value) {
+           _selected_model = value;
+           _angle = 0.0;
+           update();
+       }
+    }
+
+    void GLWidget::set_subdivision_points(int value) {
+        _parametric_div_point_count = value;
+        try {
+            if (_parametric_curves[_selected_parametric_curve] &&
+                _parametric_curves[_selected_parametric_curve] &&
+                _parametric_div_point_count != _images_of_parametric_curves[_selected_parametric_curve]->GetPointCount()){
+                // régi kép törlése
+                delete _images_of_parametric_curves[_selected_parametric_curve];
+
+                // új osztópontrendszerhez tartozó kép előállítása
+                _images_of_parametric_curves[_selected_parametric_curve] = _parametric_curves[_selected_parametric_curve]->GenerateImage(_parametric_div_point_count, GL_STATIC_DRAW);
+
+                if (!_images_of_parametric_curves[_selected_parametric_curve])
+                {
+                    // hiba- és kivételkezelés
+                }
+
+                // az új kép csúcspont-pufferobjektumainak felépítése
+                if (!_images_of_parametric_curves[_selected_parametric_curve]->UpdateVertexBufferObjects(_derivatives_scale))
+                {
+                    // memóriaszivárgás elkerülése, továbbá hiba- és kivételkezelés
+                }
+                update();
+            }
+        } catch (Exception &e) {
+            cout << e << endl;
+        }
+    }
+
+
+    void GLWidget::set_parametric_first_derivatives(bool value) {
+        if (_parametric_first_derivatives != value) {
+            _parametric_first_derivatives = value;
+            update();
+        }
+    }
+
+    void GLWidget::set_parametric_second_derivatives(bool value) {
+        if (_parametric_second_derivatives != value) {
+            _parametric_second_derivatives = value;
+            update();
+        }
+    }
+
+    void GLWidget::set_tab(int value) {
+        _current_tab = value;
+        update();
+    }
+
+    void GLWidget::_animate() {
+        TriangulatedMesh3 selected = _models[_selected_model];
+
+        if(_current_tab != 2 || _selected_model > 1)
+            return;
+
+        GLfloat *vertex = selected.MapVertexBuffer(GL_READ_WRITE);
+        GLfloat *normal = selected.MapNormalBuffer(GL_READ_ONLY);
+
+        _angle += DEG_TO_RADIAN;
+        if(_angle >= TWO_PI)
+            _angle -=TWO_PI;
+
+        GLfloat scale = sin(_angle) / 3000.0;
+
+        for(GLuint i = 0; i < selected.VertexCount(); ++i)
+        {
+            for(GLuint coordinate = 0; coordinate < 3; ++coordinate, ++vertex, ++normal)
+            {
+                *vertex += scale * (*normal);
+            }
+        }
+
+        selected.UnmapVertexBuffer();
+        selected.UnmapNormalBuffer();
+
+        update();
+    }
+}
